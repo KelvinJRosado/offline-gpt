@@ -1,6 +1,7 @@
 import os
 import sys
 import threading
+import logging
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter
@@ -10,7 +11,74 @@ from PySide6.QtGui import QAction
 from offline_gpt.database.history import ChatHistoryDB
 from offline_gpt.backend.llm import LLMBackend
 
+# Setup structured logging
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, 'app.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler(sys.stderr)
+    ]
+)
+logger = logging.getLogger("offline-gpt")
+
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../models/Phi-3-mini-4k-instruct-q4.gguf')
+
+class LoadingBubble(QWidget):
+    def __init__(self, parent_width=600):
+        super().__init__()
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(10, 5, 10, 5)
+        outer_layout.setSpacing(2)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        sender_label = QLabel("LLM")
+        sender_label.setStyleSheet("font-weight: bold; color: #444;")
+        outer_layout.addWidget(sender_label, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # Message row with loading dots
+        msg_row = QHBoxLayout()
+        loading_label = QLabel("Thinking")
+        loading_label.setWordWrap(True)
+        loading_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bubble_width = int(parent_width * 0.7)
+        loading_label.setMaximumWidth(bubble_width)
+        loading_label.setMinimumWidth(80)
+        loading_label.setStyleSheet("background: #f1f1f1; border-radius: 10px; padding: 8px; color: #222;")
+        msg_row.addWidget(loading_label)
+        msg_row.addStretch(1)
+        outer_layout.addLayout(msg_row)
+
+        # Add animated dots
+        self.dots_label = QLabel("...")
+        self.dots_label.setStyleSheet("font-size: 16px; color: #888;")
+        outer_layout.addWidget(self.dots_label, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        ts_label = QLabel(QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
+        ts_label.setStyleSheet("font-size: 10px; color: #888;")
+        outer_layout.addWidget(ts_label, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # Add a bottom border for separation
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        outer_layout.addWidget(line)
+
+        # Start dot animation
+        self.dot_count = 0
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._animate_dots)
+        self.timer.start(500)  # Update every 500ms
+
+    def _animate_dots(self):
+        self.dot_count = (self.dot_count + 1) % 4
+        self.dots_label.setText("." * self.dot_count)
+
+    def stop_animation(self):
+        self.timer.stop()
 
 class ChatBubble(QWidget):
     def __init__(self, sender, message, timestamp, is_user=False, parent_width=600):
@@ -68,11 +136,15 @@ class ChatWindow(QMainWindow):
         self._init_ui()
         self._apply_theme()
         self._load_conversations()
+        # Auto-focus the input field
+        self.input_box.setFocus()
+        logger.info("App started and UI initialized.")
 
     def _load_llm_backend(self):
         try:
             self.llm = LLMBackend(os.path.abspath(MODEL_PATH))
         except Exception as e:
+            logger.error(f"Failed to load LLM model: {e}")
             QMessageBox.critical(self, "LLM Load Error", f"Failed to load LLM model: {e}")
             self.llm = None
 
@@ -89,10 +161,12 @@ class ChatWindow(QMainWindow):
         self.sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.sidebar_layout.setSpacing(0)
         self.sidebar.setFixedWidth(40)
+        # Hamburger button at the top
         self.sidebar_btn = QPushButton("☰")
         self.sidebar_btn.setFixedWidth(40)
+        self.sidebar_btn.setFixedHeight(40)
         self.sidebar_btn.clicked.connect(self.toggle_sidebar)
-        self.sidebar_layout.addWidget(self.sidebar_btn)
+        self.sidebar_layout.addWidget(self.sidebar_btn, alignment=Qt.AlignmentFlag.AlignTop)
         self.convo_list = QListWidget()
         self.convo_list.setVisible(False)
         self.convo_list.itemClicked.connect(self.select_conversation)
@@ -166,6 +240,7 @@ class ChatWindow(QMainWindow):
         self.current_conversation_id = convo_id
         self._load_history()
         self.toggle_sidebar()
+        self.input_box.setFocus()  # Auto-focus input field
 
     def create_conversation(self):
         summary = "New Conversation"
@@ -174,6 +249,7 @@ class ChatWindow(QMainWindow):
         self._load_conversations()
         self._load_history()
         self.toggle_sidebar()
+        self.input_box.setFocus() # Auto-focus input field
 
     def _load_history(self):
         # Clear UI
@@ -205,6 +281,12 @@ class ChatWindow(QMainWindow):
         parent_width = self.scroll_area.viewport().width()
         self.add_chat_bubble("You", user_msg, is_user=True, timestamp=timestamp, parent_width=parent_width)
         self.input_box.clear()
+        
+        # Add loading bubble
+        self.loading_bubble = LoadingBubble(parent_width)
+        self.chat_layout.insertWidget(self.chat_layout.count() - 1, self.loading_bubble)
+        self._scroll_to_bottom()
+        
         # Call LLM in a background thread
         threading.Thread(target=self._get_llm_and_display, args=(user_msg, timestamp, parent_width), daemon=True).start()
 
@@ -213,25 +295,58 @@ class ChatWindow(QMainWindow):
             llm_response = "[LLM not available]"
         else:
             llm_response = self.llm.chat(user_msg)
-        def update_ui():
-            self.add_chat_bubble("LLM", llm_response, is_user=False, timestamp=timestamp, parent_width=parent_width)
-            if self.current_conversation_id:
-                self.history_db.add_message(self.current_conversation_id, user_msg, llm_response)
-            # Check storage limit
-            if os.path.exists(self.history_db.db_path):
-                size_mb = os.path.getsize(self.history_db.db_path) / (1024 * 1024)
-                if size_mb > self.history_db.storage_limit_mb:
-                    QMessageBox.warning(self, "Storage Limit Reached", "Chat history storage limit reached. Please delete old chats to free up space.")
-        QTimer.singleShot(0, update_ui)
+        
+        # Store the response data for the UI update
+        self.pending_response = {
+            'llm_response': llm_response,
+            'user_msg': user_msg,
+            'timestamp': timestamp,
+            'parent_width': parent_width
+        }
+        
+        # Use QTimer to ensure this runs on the main thread
+        QTimer.singleShot(0, self._update_ui_with_response)
+
+    def _update_ui_with_response(self):
+        if not hasattr(self, 'pending_response'):
+            return
+            
+        response_data = self.pending_response
+        llm_response = response_data['llm_response']
+        user_msg = response_data['user_msg']
+        timestamp = response_data['timestamp']
+        parent_width = response_data['parent_width']
+        
+        logger.info(f"Adding LLM response to UI: {llm_response[:100]}...")
+        # Remove loading bubble
+        if hasattr(self, 'loading_bubble') and self.loading_bubble:
+            self.loading_bubble.stop_animation()
+            self.loading_bubble.setParent(None)
+            self.loading_bubble = None
+        
+        # Add the actual response
+        self.add_chat_bubble("LLM", llm_response, is_user=False, timestamp=timestamp, parent_width=parent_width)
+        if self.current_conversation_id:
+            self.history_db.add_message(self.current_conversation_id, user_msg, llm_response)
+        # Check storage limit
+        if os.path.exists(self.history_db.db_path):
+            size_mb = os.path.getsize(self.history_db.db_path) / (1024 * 1024)
+            if size_mb > self.history_db.storage_limit_mb:
+                QMessageBox.warning(self, "Storage Limit Reached", "Chat history storage limit reached. Please delete old chats to free up space.")
+        
+        # Clear the pending response
+        delattr(self, 'pending_response')
 
     def add_chat_bubble(self, sender, message, is_user=False, timestamp=None, parent_width=None):
         if timestamp is None:
             timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
         if parent_width is None:
             parent_width = self.scroll_area.viewport().width()
+        logger.info(f"Creating chat bubble for {sender}: {message[:50]}...")
         bubble = ChatBubble(sender, message, timestamp, is_user, parent_width)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
         self._scroll_to_bottom()
+        logger.info(f"Chat bubble added, total bubbles: {self.chat_layout.count() - 1}")
 
     def _scroll_to_bottom(self):
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
@@ -262,7 +377,9 @@ class ChatWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
+            logger.info(f"Clearing chat for conversation {self.current_conversation_id}")
             self.history_db.clear_history(self.current_conversation_id)
+            # Clear chat bubbles from UI
             for i in reversed(range(self.chat_layout.count() - 1)):
                 widget = self.chat_layout.itemAt(i).widget()
                 if widget:
