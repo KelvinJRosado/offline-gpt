@@ -1,10 +1,12 @@
+import os
+import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame
+    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox
 )
 from PySide6.QtCore import Qt, QDateTime
-import sys
 from PySide6.QtGui import QAction
+from offline_gpt.database.history import ChatHistoryDB
 
 class ChatBubble(QWidget):
     def __init__(self, sender, message, timestamp, is_user=False, parent_width=600):
@@ -25,7 +27,6 @@ class ChatBubble(QWidget):
         msg_label = QLabel(message)
         msg_label.setWordWrap(True)
         msg_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # Set width to 70% of parent width
         bubble_width = int(parent_width * 0.7)
         msg_label.setMaximumWidth(bubble_width)
         msg_label.setMinimumWidth(80)
@@ -56,6 +57,10 @@ class ChatWindow(QMainWindow):
         self._init_ui()
         self.dark_mode = False
         self._apply_theme()
+        # Chat history DB setup
+        db_path = os.path.join(os.path.expanduser("~"), ".offline_gpt_chat.db")
+        self.history_db = ChatHistoryDB(db_path, storage_limit_mb=500)
+        self._load_history()
 
     def _init_ui(self):
         central = QWidget()
@@ -91,25 +96,50 @@ class ChatWindow(QMainWindow):
         self.theme_action.triggered.connect(self.toggle_theme)
         toolbar.addAction(self.theme_action)
 
+    def _load_history(self):
+        history = self.history_db.get_history()
+        parent_width = self.scroll_area.viewport().width()
+        for row in history:
+            _id, timestamp, user_msg, llm_resp = row
+            if user_msg:
+                self._add_bubble_from_history("You", user_msg, timestamp, True, parent_width)
+            if llm_resp:
+                self._add_bubble_from_history("LLM", llm_resp, timestamp, False, parent_width)
+        self._scroll_to_bottom()
+
+    def _add_bubble_from_history(self, sender, message, timestamp, is_user, parent_width):
+        bubble = ChatBubble(sender, message, timestamp, is_user, parent_width)
+        self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
+
     def send_message(self):
         user_msg = self.input_box.text().strip()
         if not user_msg:
             return
-        self.add_chat_bubble("You", user_msg, is_user=True)
+        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+        parent_width = self.scroll_area.viewport().width()
+        self.add_chat_bubble("You", user_msg, is_user=True, timestamp=timestamp, parent_width=parent_width)
         self.input_box.clear()
         # Placeholder for LLM response
         llm_response = self.get_llm_response(user_msg)
-        self.add_chat_bubble("LLM", llm_response, is_user=False)
+        self.add_chat_bubble("LLM", llm_response, is_user=False, timestamp=timestamp, parent_width=parent_width)
+        # Save to DB
+        self.history_db.add_message(user_msg, llm_response)
+        # Check storage limit
+        if os.path.exists(self.history_db.db_path):
+            size_mb = os.path.getsize(self.history_db.db_path) / (1024 * 1024)
+            if size_mb > self.history_db.storage_limit_mb:
+                QMessageBox.warning(self, "Storage Limit Reached", "Chat history storage limit reached. Please delete old chats to free up space.")
 
-    def add_chat_bubble(self, sender, message, is_user=False):
-        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
-        parent_width = self.scroll_area.viewport().width()
+    def add_chat_bubble(self, sender, message, is_user=False, timestamp=None, parent_width=None):
+        if timestamp is None:
+            timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+        if parent_width is None:
+            parent_width = self.scroll_area.viewport().width()
         bubble = ChatBubble(sender, message, timestamp, is_user, parent_width)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
         self._scroll_to_bottom()
 
     def _scroll_to_bottom(self):
-        # Scroll to the bottom after adding a new message
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 
     def get_llm_response(self, user_msg):
