@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter
 )
-from PySide6.QtCore import Qt, QDateTime, QTimer
+from PySide6.QtCore import Qt, QDateTime, QTimer, Signal, QObject
 from PySide6.QtGui import QAction
 from offline_gpt.database.history import ChatHistoryDB
 from offline_gpt.backend.llm import LLMBackend
@@ -44,10 +44,11 @@ class LoadingBubble(QWidget):
         loading_label = QLabel("Thinking")
         loading_label.setWordWrap(True)
         loading_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        bubble_width = int(parent_width * 0.7)
+        # Match the chat bubble width
+        bubble_width = int(parent_width * 0.85)
         loading_label.setMaximumWidth(bubble_width)
-        loading_label.setMinimumWidth(80)
-        loading_label.setStyleSheet("background: #f1f1f1; border-radius: 10px; padding: 8px; color: #222;")
+        loading_label.setMinimumWidth(120)
+        loading_label.setStyleSheet("background: #f1f1f1; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;")
         msg_row.addWidget(loading_label)
         msg_row.addStretch(1)
         outer_layout.addLayout(msg_row)
@@ -99,12 +100,13 @@ class ChatBubble(QWidget):
         msg_label = QLabel(message)
         msg_label.setWordWrap(True)
         msg_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        bubble_width = int(parent_width * 0.7)
+        # Increase bubble width to 85% of parent width for better text display
+        bubble_width = int(parent_width * 0.85)
         msg_label.setMaximumWidth(bubble_width)
-        msg_label.setMinimumWidth(80)
+        msg_label.setMinimumWidth(120)  # Increased minimum width
         msg_label.setStyleSheet(
-            "background: #e1f5fe; border-radius: 10px; padding: 8px; color: #222;" if is_user else
-            "background: #f1f1f1; border-radius: 10px; padding: 8px; color: #222;"
+            "background: #e1f5fe; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;" if is_user else
+            "background: #f1f1f1; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;"
         )
         msg_row.addWidget(msg_label)
         if not is_user:
@@ -122,6 +124,8 @@ class ChatBubble(QWidget):
         outer_layout.addWidget(line)
 
 class ChatWindow(QMainWindow):
+    # Signal to handle LLM response in main thread
+    llm_response_ready = Signal(str, str, str, int)  # llm_response, user_msg, timestamp, parent_width
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Offline-GPT")
@@ -138,6 +142,10 @@ class ChatWindow(QMainWindow):
         self._load_conversations()
         # Auto-focus the input field
         self.input_box.setFocus()
+        
+        # Connect the signal to the slot
+        self.llm_response_ready.connect(self._handle_llm_response)
+        
         logger.info("App started and UI initialized.")
 
     def _load_llm_backend(self):
@@ -296,28 +304,15 @@ class ChatWindow(QMainWindow):
         else:
             llm_response = self.llm.chat(user_msg)
         
-        # Store the response data for the UI update
-        self.pending_response = {
-            'llm_response': llm_response,
-            'user_msg': user_msg,
-            'timestamp': timestamp,
-            'parent_width': parent_width
-        }
+        logger.info(f"LLM thread completed, emitting signal with response: {llm_response[:50]}...")
         
-        # Use QTimer to ensure this runs on the main thread
-        QTimer.singleShot(0, self._update_ui_with_response)
+        # Emit signal to update UI in main thread
+        self.llm_response_ready.emit(llm_response, user_msg, timestamp, parent_width)
 
-    def _update_ui_with_response(self):
-        if not hasattr(self, 'pending_response'):
-            return
-            
-        response_data = self.pending_response
-        llm_response = response_data['llm_response']
-        user_msg = response_data['user_msg']
-        timestamp = response_data['timestamp']
-        parent_width = response_data['parent_width']
+    def _handle_llm_response(self, llm_response, user_msg, timestamp, parent_width):
+        """Handle LLM response in the main thread"""
+        logger.info(f"Signal received, adding LLM response to UI: {llm_response[:100]}...")
         
-        logger.info(f"Adding LLM response to UI: {llm_response[:100]}...")
         # Remove loading bubble
         if hasattr(self, 'loading_bubble') and self.loading_bubble:
             self.loading_bubble.stop_animation()
@@ -333,9 +328,7 @@ class ChatWindow(QMainWindow):
             size_mb = os.path.getsize(self.history_db.db_path) / (1024 * 1024)
             if size_mb > self.history_db.storage_limit_mb:
                 QMessageBox.warning(self, "Storage Limit Reached", "Chat history storage limit reached. Please delete old chats to free up space.")
-        
-        # Clear the pending response
-        delattr(self, 'pending_response')
+
 
     def add_chat_bubble(self, sender, message, is_user=False, timestamp=None, parent_width=None):
         if timestamp is None:

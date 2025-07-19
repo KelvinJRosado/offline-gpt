@@ -61,21 +61,30 @@ class LLMBackend:
                 handler.flush()
             if isinstance(response, dict) and 'choices' in response:
                 generated_text = response['choices'][0]['text'].strip()
-                # Clean up the response - remove any remaining assistant tags and extra content
-                generated_text = generated_text.replace('<|assistant|>', '').strip()
-                # If there are multiple responses, take only the first one
-                if '<|assistant|>' in generated_text:
-                    generated_text = generated_text.split('<|assistant|>')[0].strip()
+                # Clean up the response - take only the first response
+                # Split by newlines and take the first non-empty line that doesn't start with <|assistant|>
+                lines = generated_text.split('\n')
+                first_response = ""
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith('<|assistant|>'):
+                        first_response = line
+                        break
+                
+                # If no clean line found, take the first line and clean it
+                if not first_response:
+                    first_response = lines[0].strip() if lines else ""
+                    first_response = first_response.replace('<|assistant|>', '').strip()
             else:
-                generated_text = "[Invalid response format]"
+                first_response = "[Invalid response format]"
             self.conversation_history.extend([
                 {"role": "user", "content": prompt},
-                {"role": "assistant", "content": generated_text}
+                {"role": "assistant", "content": first_response}
             ])
-            logger.info(f"Extracted LLM response: {generated_text}")
+            logger.info(f"Extracted LLM response: {first_response}")
             for handler in logger.handlers:
                 handler.flush()
-            return generated_text
+            return first_response
         except Exception as e:
             logger.error(f"LLM error: {e}")
             for handler in logger.handlers:
