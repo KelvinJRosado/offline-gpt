@@ -44,10 +44,10 @@ class LoadingBubble(QWidget):
         loading_label = QLabel("Thinking")
         loading_label.setWordWrap(True)
         loading_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # Match the chat bubble width
-        bubble_width = int(parent_width * 0.85)
+        # Match the chat bubble width - 95% of parent width
+        bubble_width = int(parent_width * 0.95)
         loading_label.setMaximumWidth(bubble_width)
-        loading_label.setMinimumWidth(120)
+        loading_label.setMinimumWidth(200)
         loading_label.setStyleSheet("background: #f1f1f1; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;")
         msg_row.addWidget(loading_label)
         msg_row.addStretch(1)
@@ -100,10 +100,10 @@ class ChatBubble(QWidget):
         msg_label = QLabel(message)
         msg_label.setWordWrap(True)
         msg_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # Increase bubble width to 85% of parent width for better text display
-        bubble_width = int(parent_width * 0.85)
+        # Increase bubble width to 95% of parent width for maximum text display
+        bubble_width = int(parent_width * 0.95)
         msg_label.setMaximumWidth(bubble_width)
-        msg_label.setMinimumWidth(120)  # Increased minimum width
+        msg_label.setMinimumWidth(200)  # Increased minimum width significantly
         msg_label.setStyleSheet(
             "background: #e1f5fe; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;" if is_user else
             "background: #f1f1f1; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;"
