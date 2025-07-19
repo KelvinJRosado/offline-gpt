@@ -4,7 +4,7 @@ import threading
 import logging
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter, QMenu
+    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter, QMenu, QProgressBar
 )
 from PySide6.QtCore import Qt, QDateTime, QTimer, Signal, QObject
 from PySide6.QtGui import QAction
@@ -177,16 +177,47 @@ class ChatWindow(QMainWindow):
         self.sidebar_btn.setFixedHeight(40)
         self.sidebar_btn.clicked.connect(self.toggle_sidebar)
         self.sidebar_layout.addWidget(self.sidebar_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        # Scrollable chat list
         self.convo_list = QListWidget()
         self.convo_list.setVisible(False)
         self.convo_list.itemClicked.connect(self.select_conversation)
         self.convo_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.convo_list.customContextMenuRequested.connect(self.show_conversation_context_menu)
-        self.sidebar_layout.addWidget(self.convo_list)
+        self.convo_scroll = QScrollArea()
+        self.convo_scroll.setWidgetResizable(True)
+        self.convo_scroll.setWidget(self.convo_list)
+        self.sidebar_layout.addWidget(self.convo_scroll)
         self.new_convo_btn = QPushButton("+")
         self.new_convo_btn.setVisible(False)
         self.new_convo_btn.clicked.connect(self.create_conversation)
         self.sidebar_layout.addWidget(self.new_convo_btn)
+        # Bottom bar container for progress bar and delete all button
+        self.sidebar_bottom = QWidget()
+        self.sidebar_bottom_layout = QVBoxLayout(self.sidebar_bottom)
+        self.sidebar_bottom_layout.setContentsMargins(8, 4, 8, 8)
+        self.sidebar_bottom_layout.setSpacing(4)
+        # Progress bar
+        self.storage_bar = QProgressBar()
+        self.storage_bar.setTextVisible(False)
+        self.storage_bar.setFixedHeight(16)
+        self.storage_bar_label_row = QHBoxLayout()
+        self.storage_bar_percent = QLabel()
+        self.storage_bar_percent.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.storage_bar_label_row.addStretch(1)
+        self.storage_bar_label_row.addWidget(self.storage_bar_percent)
+        self.sidebar_bottom_layout.addLayout(self.storage_bar_label_row)
+        self.sidebar_bottom_layout.addWidget(self.storage_bar)
+        self.storage_bar_mb = QLabel()
+        self.storage_bar_mb.setStyleSheet("font-size: 11px; color: #888;")
+        self.sidebar_bottom_layout.addWidget(self.storage_bar_mb)
+        # Delete all button
+        self.delete_all_btn = QPushButton("Delete All")
+        self.delete_all_btn.setStyleSheet("background: #f44336; color: #fff; font-weight: bold; border-radius: 6px; padding: 4px 0;")
+        self.delete_all_btn.clicked.connect(self.delete_all_conversations)
+        self.sidebar_bottom_layout.addWidget(self.delete_all_btn)
+        self.sidebar_layout.addWidget(self.sidebar_bottom)
+        self.sidebar_bottom.setVisible(False)  # Start hidden since sidebar is minimized
+        self._update_storage_bar()
         main_layout.addWidget(self.sidebar)
 
         # Main chat area
@@ -230,10 +261,13 @@ class ChatWindow(QMainWindow):
             self.sidebar.setFixedWidth(220)
             self.convo_list.setVisible(True)
             self.new_convo_btn.setVisible(True)
+            self.sidebar_bottom.setVisible(True)
         else:
             self.sidebar.setFixedWidth(40)
             self.convo_list.setVisible(False)
             self.new_convo_btn.setVisible(False)
+            self.sidebar_bottom.setVisible(False)
+        self._update_storage_bar()  # Always update storage bar when toggling sidebar
 
     def _load_conversations(self):
         self.convo_list.clear()
@@ -262,6 +296,7 @@ class ChatWindow(QMainWindow):
         self._load_history()
         self.toggle_sidebar()
         self.input_box.setFocus() # Auto-focus input field
+        self._update_storage_bar()  # Update storage bar after creating conversation
 
     def _update_conversation_summary(self, user_msg):
         """Update conversation summary based on the first user message"""
@@ -302,6 +337,28 @@ class ChatWindow(QMainWindow):
         bubble = ChatBubble(sender, message, timestamp, is_user, parent_width)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
 
+    def delete_all_conversations(self):
+        reply = QMessageBox.question(
+            self,
+            "Delete All Conversations",
+            "Are you sure you want to delete ALL conversations? This will erase all chat history and cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            logger.info("Deleting all conversations and chat history")
+            # Delete all from DB
+            for convo_id, _ in self.history_db.get_conversations():
+                self.history_db.delete_conversation(convo_id)
+            # Remove all from UI
+            self.convo_list.clear()
+            self.current_conversation_id = None
+            for i in reversed(range(self.chat_layout.count() - 1)):
+                widget = self.chat_layout.itemAt(i).widget()
+                if widget:
+                    widget.setParent(None)
+            self._scroll_to_bottom()
+            self._update_storage_bar()
+
     def send_message(self):
         user_msg = self.input_box.text().strip()
         if not user_msg or not self.current_conversation_id:
@@ -310,28 +367,32 @@ class ChatWindow(QMainWindow):
         parent_width = self.scroll_area.viewport().width()
         self.add_chat_bubble("You", user_msg, is_user=True, timestamp=timestamp, parent_width=parent_width)
         self.input_box.clear()
-        
         # Update conversation summary on first message
         if self.chat_layout.count() == 2:  # Only user message + stretch widget
             self._update_conversation_summary(user_msg)
-        
         # Add loading bubble
         self.loading_bubble = LoadingBubble(parent_width)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, self.loading_bubble)
         self._scroll_to_bottom()
-        
-        # Call LLM in a background thread
-        threading.Thread(target=self._get_llm_and_display, args=(user_msg, timestamp, parent_width), daemon=True).start()
+        # Call LLM in a background thread, passing full conversation history
+        history = self.history_db.get_history(self.current_conversation_id)
+        conversation = []
+        for row in history:
+            _id, _convo_id, timestamp, user_msg_h, llm_resp = row
+            if user_msg_h:
+                conversation.append({"role": "user", "content": user_msg_h})
+            if llm_resp:
+                conversation.append({"role": "assistant", "content": llm_resp})
+        # Add the new user message
+        conversation.append({"role": "user", "content": user_msg})
+        threading.Thread(target=self._get_llm_and_display, args=(user_msg, timestamp, parent_width, conversation), daemon=True).start()
 
-    def _get_llm_and_display(self, user_msg, timestamp, parent_width):
+    def _get_llm_and_display(self, user_msg, timestamp, parent_width, conversation):
         if not self.llm:
             llm_response = "[LLM not available]"
         else:
-            llm_response = self.llm.chat(user_msg)
-        
+            llm_response = self.llm.chat(user_msg, conversation=conversation)
         logger.info(f"LLM thread completed, emitting signal with response: {llm_response[:50]}...")
-        
-        # Emit signal to update UI in main thread
         self.llm_response_ready.emit(llm_response, user_msg, timestamp, parent_width)
 
     def _handle_llm_response(self, llm_response, user_msg, timestamp, parent_width):
@@ -353,6 +414,7 @@ class ChatWindow(QMainWindow):
             size_mb = os.path.getsize(self.history_db.db_path) / (1024 * 1024)
             if size_mb > self.history_db.storage_limit_mb:
                 QMessageBox.warning(self, "Storage Limit Reached", "Chat history storage limit reached. Please delete old chats to free up space.")
+        self._update_storage_bar() # Update storage bar after sending message
 
 
     def add_chat_bubble(self, sender, message, is_user=False, timestamp=None, parent_width=None):
@@ -409,6 +471,7 @@ class ChatWindow(QMainWindow):
                 if item.data(Qt.ItemDataRole.UserRole) == self.current_conversation_id:
                     self.convo_list.takeItem(i)
                     break
+            self._update_storage_bar() # Update storage bar after clearing chat
 
     def show_conversation_context_menu(self, position):
         """Show context menu for conversation list"""
@@ -453,6 +516,30 @@ class ChatWindow(QMainWindow):
                     if widget:
                         widget.setParent(None)
                 self._scroll_to_bottom()
+            self._update_storage_bar() # Update storage bar after deleting conversation
+
+    def _update_storage_bar(self):
+        db_path = self.history_db.db_path
+        logger.info(f"Checking storage for database: {db_path}")
+        logger.info(f"Database exists: {os.path.exists(db_path)}")
+        used_mb = os.path.getsize(db_path) / (1024 * 1024) if os.path.exists(db_path) else 0
+        limit_mb = self.history_db.storage_limit_mb
+        percent = int((used_mb / limit_mb) * 100) if limit_mb > 0 else 0
+        logger.info(f"Storage: {used_mb:.2f} MB used, {limit_mb} MB limit, {percent}%")
+        self.storage_bar.setValue(percent)
+        # Color thresholds
+        if percent < 50:
+            color = '#4caf50'  # green
+        elif percent < 75:
+            color = '#ffc107'  # yellow
+        else:
+            color = '#f44336'  # red
+        self.storage_bar.setStyleSheet(f"QProgressBar::chunk {{ background: {color}; }} QProgressBar {{ border-radius: 6px; background: #222; }}")
+        self.storage_bar_percent.setText(f"{percent}%")
+        self.storage_bar_mb.setText(f"{used_mb:.1f} MB / {limit_mb} MB")
+
+    # Call self._update_storage_bar() after any action that changes storage
+    # Add calls to _update_storage_bar in send_message, clear_chat, delete_conversation, and toggle_sidebar
 
 def run_app():
     app = QApplication(sys.argv)

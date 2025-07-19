@@ -1,6 +1,6 @@
 from llama_cpp import Llama
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional
 import logging
 
 logger = logging.getLogger("offline-gpt")
@@ -34,7 +34,7 @@ class LLMBackend:
                 handler.flush()
             raise RuntimeError(f"Failed to load LLM model: {e}")
 
-    def chat(self, prompt: str, system_prompt: str = "You are a helpful assistant."):
+    def chat(self, prompt: str, system_prompt: str = "You are a helpful assistant.", conversation: Optional[List[Dict[str, str]]] = None):
         logger.info(f"Calling LLM with prompt: {prompt}")
         for handler in logger.handlers:
             handler.flush()
@@ -42,9 +42,12 @@ class LLMBackend:
             raise RuntimeError("Model not loaded.")
         try:
             # Build conversation context
-            messages = [{"role": "system", "content": system_prompt}]
-            messages.extend(self.conversation_history[-10:])
-            messages.append({"role": "user", "content": prompt})
+            if conversation is not None:
+                messages = [{"role": "system", "content": system_prompt}] + conversation
+            else:
+                messages = [{"role": "system", "content": system_prompt}]
+                messages.extend(self.conversation_history[-10:])
+                messages.append({"role": "user", "content": prompt})
             formatted_prompt = self._format_messages(messages)
             logger.info(f"Formatted prompt sent to model: {formatted_prompt}")
             for handler in logger.handlers:
@@ -62,7 +65,6 @@ class LLMBackend:
             if isinstance(response, dict) and 'choices' in response:
                 generated_text = response['choices'][0]['text'].strip()
                 # Clean up the response - take only the first response
-                # Split by newlines and take the first non-empty line that doesn't start with <|assistant|>
                 lines = generated_text.split('\n')
                 first_response = ""
                 for line in lines:
@@ -70,8 +72,6 @@ class LLMBackend:
                     if line and not line.startswith('<|assistant|>'):
                         first_response = line
                         break
-                
-                # If no clean line found, take the first line and clean it
                 if not first_response:
                     first_response = lines[0].strip() if lines else ""
                     first_response = first_response.replace('<|assistant|>', '').strip()
