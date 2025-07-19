@@ -4,7 +4,7 @@ A standalone, cross-platform chat client for conversing with a local LLM (offlin
 
 ## Features
 
-- Local LLM inference (TinyLlama 1.1B bundled)
+- Local LLM inference (Phi 3 mini bundled)
 - Modern chat UI (PySide6)
 - Dark/light mode toggle
 - Persistent chat history (SQLite, 500MB configurable limit)
@@ -23,7 +23,13 @@ A standalone, cross-platform chat client for conversing with a local LLM (offlin
    ```bash
    pip install -r requirements.txt
    ```
-4. Run the app:
+4. **Download the Phi 3 mini model file:**
+   ```bash
+   mkdir -p models
+   curl -L -o models/Phi-3-mini-4k-instruct-q4.gguf \
+     https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf
+   ```
+5. Run the app:
    ```bash
    python -m offline_gpt
    ```
