@@ -2,9 +2,10 @@ import os
 import sys
 import threading
 import logging
+import markdown
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter, QMenu, QProgressBar
+    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter, QMenu, QProgressBar, QTextEdit
 )
 from PySide6.QtCore import Qt, QDateTime, QTimer, Signal, QObject
 from PySide6.QtGui import QAction
@@ -88,7 +89,7 @@ class ChatBubble(QWidget):
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(5, 3, 5, 3)  # Reduced margins
         outer_layout.setSpacing(2)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         sender_label = QLabel(sender)
         sender_label.setStyleSheet("font-weight: bold; color: #0078d7;" if is_user else "font-weight: bold; color: #444;")
@@ -99,18 +100,34 @@ class ChatBubble(QWidget):
         msg_row.setContentsMargins(0, 0, 0, 0)  # No margins in message row
         if is_user:
             msg_row.addStretch(1)
-        msg_label = QLabel(message)
-        msg_label.setWordWrap(True)
-        msg_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        
+        # Use QTextEdit for markdown rendering
+        msg_text = QTextEdit()
+        msg_text.setReadOnly(True)
+        msg_text.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        msg_text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        msg_text.setFrameStyle(0)  # No frame
+        msg_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
         # Increase bubble width to 98% of parent width for maximum text display
         bubble_width = int(parent_width * 0.98)
-        msg_label.setMaximumWidth(bubble_width)
-        msg_label.setMinimumWidth(250)  # Increased minimum width further
-        msg_label.setStyleSheet(
-            "background: #e1f5fe; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;" if is_user else
-            "background: #f1f1f1; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;"
+        msg_text.setMaximumWidth(bubble_width)
+        msg_text.setMinimumWidth(250)  # Increased minimum width further
+        
+        # Set document width for proper text wrapping
+        msg_text.document().setTextWidth(bubble_width - 16)  # Account for padding
+        
+        # Set the content with markdown rendering
+        html_content = self._render_markdown(message)
+        msg_text.setHtml(html_content)
+        
+        # Style the text widget to look like a chat bubble
+        msg_text.setStyleSheet(
+            "QTextEdit { background: #e1f5fe; border-radius: 10px; padding: 8px; color: #222; font-size: 14px; border: none; }" if is_user else
+            "QTextEdit { background: #f1f1f1; border-radius: 10px; padding: 8px; color: #222; font-size: 14px; border: none; }"
         )
-        msg_row.addWidget(msg_label)
+        
+        msg_row.addWidget(msg_text)
         if not is_user:
             msg_row.addStretch(1)
         outer_layout.addLayout(msg_row)
@@ -125,6 +142,95 @@ class ChatBubble(QWidget):
         line.setFrameShadow(QFrame.Shadow.Sunken)
         outer_layout.addWidget(line)
 
+    def _render_markdown(self, text):
+        """Convert markdown text to HTML for display"""
+        try:
+            # Convert markdown to HTML
+            html = markdown.markdown(text, extensions=['fenced_code', 'codehilite', 'tables', 'nl2br'])
+            
+            # Add some basic CSS styling for better appearance
+            styled_html = f"""
+            <html>
+            <head>
+            <style>
+                body {{ 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    font-size: 14px;
+                    line-height: 1.4;
+                    margin: 0;
+                    padding: 0;
+                }}
+                code {{ 
+                    background-color: #f0f0f0; 
+                    padding: 2px 4px; 
+                    border-radius: 3px; 
+                    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                    font-size: 13px;
+                }}
+                pre {{ 
+                    background-color: #f5f5f5; 
+                    padding: 8px; 
+                    border-radius: 5px; 
+                    overflow-x: auto;
+                    border-left: 3px solid #0078d7;
+                }}
+                pre code {{ 
+                    background-color: transparent; 
+                    padding: 0;
+                }}
+                blockquote {{ 
+                    border-left: 3px solid #ccc; 
+                    margin: 0; 
+                    padding-left: 10px; 
+                    color: #666;
+                }}
+                ul, ol {{ 
+                    margin: 8px 0; 
+                    padding-left: 20px;
+                }}
+                li {{ 
+                    margin: 2px 0;
+                }}
+                strong, b {{ 
+                    font-weight: bold; 
+                }}
+                em, i {{ 
+                    font-style: italic; 
+                }}
+                h1, h2, h3, h4, h5, h6 {{ 
+                    margin: 8px 0 4px 0; 
+                    font-weight: bold;
+                }}
+                h1 {{ font-size: 18px; }}
+                h2 {{ font-size: 16px; }}
+                h3 {{ font-size: 15px; }}
+                table {{ 
+                    border-collapse: collapse; 
+                    width: 100%; 
+                    margin: 8px 0;
+                }}
+                th, td {{ 
+                    border: 1px solid #ddd; 
+                    padding: 6px 8px; 
+                    text-align: left;
+                }}
+                th {{ 
+                    background-color: #f5f5f5; 
+                    font-weight: bold;
+                }}
+            </style>
+            </head>
+            <body>
+            {html}
+            </body>
+            </html>
+            """
+            return styled_html
+        except Exception as e:
+            # Fallback to plain text if markdown rendering fails
+            logger.warning(f"Markdown rendering failed: {e}")
+            return f"<p>{text}</p>"
+
 class ChatWindow(QMainWindow):
     # Signal to handle LLM response in main thread
     llm_response_ready = Signal(str, str, str, int)  # llm_response, user_msg, timestamp, parent_width
@@ -134,7 +240,7 @@ class ChatWindow(QMainWindow):
         self.resize(800, 700)
         self.dark_mode = False
         db_path = os.path.join(os.path.expanduser("~"), ".offline_gpt_chat.db")
-        self.history_db = ChatHistoryDB(db_path, storage_limit_mb=500)
+        self.history_db = ChatHistoryDB(db_path, storage_limit_mb=100)
         self.llm = None
         self._load_llm_backend()
         self.current_conversation_id = None

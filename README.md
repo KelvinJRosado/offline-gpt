@@ -5,9 +5,13 @@ A standalone, cross-platform chat client for conversing with a local LLM (offlin
 ## Features
 
 - Local LLM inference (Phi 3 mini GGUF format)
-- Modern chat UI (PySide6)
+- Modern chat UI (PySide6) with markdown rendering
 - Dark/light mode toggle
-- Persistent chat history (SQLite, 500MB configurable limit)
+- Multi-conversation support with sidebar navigation
+- Persistent chat history (SQLite, 100MB configurable limit)
+- Storage usage monitoring with progress bar
+- Conversation management (create, delete, clear)
+- Loading indicators and async responses
 - Cross-platform: Windows, macOS, Linux
 - Single-file executable via PyInstaller
 
@@ -29,7 +33,7 @@ A standalone, cross-platform chat client for conversing with a local LLM (offlin
    curl -L -o models/Phi-3-mini-4k-instruct-q4.gguf \
      https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf
    ```
-4. Run the app:
+5. Run the app:
    ```bash
    python -m offline_gpt
    ```

@@ -1,4 +1,5 @@
 PySide6==6.7.0
 llama-cpp-python==0.2.72
 pytest==8.2.1
-sqlite-utils==3.36 
+sqlite-utils==3.36
+markdown==3.8.2 

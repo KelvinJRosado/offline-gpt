@@ -1,3 +1,3 @@
 {
-  "chat_history_storage_limit_mb": 500
+  "chat_history_storage_limit_mb": 100
 }
