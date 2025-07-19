@@ -64,17 +64,11 @@ class LLMBackend:
                 handler.flush()
             if isinstance(response, dict) and 'choices' in response:
                 generated_text = response['choices'][0]['text'].strip()
-                # Clean up the response - take only the first response
-                lines = generated_text.split('\n')
-                first_response = ""
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith('<|assistant|>'):
-                        first_response = line
-                        break
-                if not first_response:
-                    first_response = lines[0].strip() if lines else ""
-                    first_response = first_response.replace('<|assistant|>', '').strip()
+                # Clean up the response - remove assistant tags and get full response
+                if generated_text.startswith('<|assistant|>'):
+                    generated_text = generated_text.replace('<|assistant|>', '').strip()
+                # Take the entire response, not just the first line
+                first_response = generated_text
             else:
                 first_response = "[Invalid response format]"
             self.conversation_history.extend([
