@@ -14,11 +14,16 @@ A standalone, cross-platform chat client for conversing with a local LLM (offlin
 ## Setup (Development)
 
 1. Clone the repo
-2. Install dependencies:
+2. Create and activate a virtual environment (recommended):
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Run the app:
+4. Run the app:
    ```bash
    python -m offline_gpt
    ```
