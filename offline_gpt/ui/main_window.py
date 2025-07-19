@@ -4,7 +4,7 @@ import threading
 import logging
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter
+    QLineEdit, QPushButton, QToolBar, QLabel, QScrollArea, QSizePolicy, QFrame, QMessageBox, QListWidget, QListWidgetItem, QSplitter, QMenu
 )
 from PySide6.QtCore import Qt, QDateTime, QTimer, Signal, QObject
 from PySide6.QtGui import QAction
@@ -31,7 +31,7 @@ class LoadingBubble(QWidget):
     def __init__(self, parent_width=600):
         super().__init__()
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(10, 5, 10, 5)
+        outer_layout.setContentsMargins(5, 3, 5, 3)  # Reduced margins
         outer_layout.setSpacing(2)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -41,13 +41,14 @@ class LoadingBubble(QWidget):
 
         # Message row with loading dots
         msg_row = QHBoxLayout()
+        msg_row.setContentsMargins(0, 0, 0, 0)  # No margins in message row
         loading_label = QLabel("Thinking")
         loading_label.setWordWrap(True)
         loading_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # Match the chat bubble width - 95% of parent width
-        bubble_width = int(parent_width * 0.95)
+        # Match the chat bubble width - 98% of parent width
+        bubble_width = int(parent_width * 0.98)
         loading_label.setMaximumWidth(bubble_width)
-        loading_label.setMinimumWidth(200)
+        loading_label.setMinimumWidth(250)
         loading_label.setStyleSheet("background: #f1f1f1; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;")
         msg_row.addWidget(loading_label)
         msg_row.addStretch(1)
@@ -85,7 +86,7 @@ class ChatBubble(QWidget):
     def __init__(self, sender, message, timestamp, is_user=False, parent_width=600):
         super().__init__()
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(10, 5, 10, 5)
+        outer_layout.setContentsMargins(5, 3, 5, 3)  # Reduced margins
         outer_layout.setSpacing(2)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -95,15 +96,16 @@ class ChatBubble(QWidget):
 
         # Message row with stretch for alignment
         msg_row = QHBoxLayout()
+        msg_row.setContentsMargins(0, 0, 0, 0)  # No margins in message row
         if is_user:
             msg_row.addStretch(1)
         msg_label = QLabel(message)
         msg_label.setWordWrap(True)
         msg_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # Increase bubble width to 95% of parent width for maximum text display
-        bubble_width = int(parent_width * 0.95)
+        # Increase bubble width to 98% of parent width for maximum text display
+        bubble_width = int(parent_width * 0.98)
         msg_label.setMaximumWidth(bubble_width)
-        msg_label.setMinimumWidth(200)  # Increased minimum width significantly
+        msg_label.setMinimumWidth(250)  # Increased minimum width further
         msg_label.setStyleSheet(
             "background: #e1f5fe; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;" if is_user else
             "background: #f1f1f1; border-radius: 10px; padding: 12px; color: #222; font-size: 14px;"
@@ -178,6 +180,8 @@ class ChatWindow(QMainWindow):
         self.convo_list = QListWidget()
         self.convo_list.setVisible(False)
         self.convo_list.itemClicked.connect(self.select_conversation)
+        self.convo_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.convo_list.customContextMenuRequested.connect(self.show_conversation_context_menu)
         self.sidebar_layout.addWidget(self.convo_list)
         self.new_convo_btn = QPushButton("+")
         self.new_convo_btn.setVisible(False)
@@ -259,6 +263,23 @@ class ChatWindow(QMainWindow):
         self.toggle_sidebar()
         self.input_box.setFocus() # Auto-focus input field
 
+    def _update_conversation_summary(self, user_msg):
+        """Update conversation summary based on the first user message"""
+        if not self.current_conversation_id:
+            return
+        
+        # Generate a 2-5 word summary from the first message
+        words = user_msg.split()[:5]  # Take first 5 words
+        summary = " ".join(words)
+        if len(summary) > 30:  # Truncate if too long
+            summary = summary[:27] + "..."
+        
+        # Update the conversation summary in the database
+        self.history_db.update_conversation_summary(self.current_conversation_id, summary)
+        
+        # Refresh the conversation list
+        self._load_conversations()
+
     def _load_history(self):
         # Clear UI
         for i in reversed(range(self.chat_layout.count() - 1)):
@@ -289,6 +310,10 @@ class ChatWindow(QMainWindow):
         parent_width = self.scroll_area.viewport().width()
         self.add_chat_bubble("You", user_msg, is_user=True, timestamp=timestamp, parent_width=parent_width)
         self.input_box.clear()
+        
+        # Update conversation summary on first message
+        if self.chat_layout.count() == 2:  # Only user message + stretch widget
+            self._update_conversation_summary(user_msg)
         
         # Add loading bubble
         self.loading_bubble = LoadingBubble(parent_width)
@@ -378,6 +403,56 @@ class ChatWindow(QMainWindow):
                 if widget:
                     widget.setParent(None)
             self._scroll_to_bottom()
+            # Remove conversation from list
+            for i in range(self.convo_list.count()):
+                item = self.convo_list.item(i)
+                if item.data(Qt.ItemDataRole.UserRole) == self.current_conversation_id:
+                    self.convo_list.takeItem(i)
+                    break
+
+    def show_conversation_context_menu(self, position):
+        """Show context menu for conversation list"""
+        item = self.convo_list.itemAt(position)
+        if not item:
+            return
+        
+        menu = QMenu()
+        delete_action = menu.addAction("Delete Conversation")
+        delete_action.triggered.connect(lambda: self.delete_conversation(item))
+        
+        # Show menu at cursor position
+        menu.exec(self.convo_list.mapToGlobal(position))
+
+    def delete_conversation(self, item):
+        """Delete a conversation from the list and database"""
+        convo_id = item.data(Qt.ItemDataRole.UserRole)
+        summary = item.text()
+        
+        reply = QMessageBox.question(
+            self,
+            "Delete Conversation",
+            f"Are you sure you want to delete '{summary}'? This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            logger.info(f"Deleting conversation {convo_id}: {summary}")
+            
+            # Delete from database
+            self.history_db.delete_conversation(convo_id)
+            
+            # Remove from list
+            self.convo_list.takeItem(self.convo_list.row(item))
+            
+            # If this was the current conversation, clear the chat area
+            if convo_id == self.current_conversation_id:
+                self.current_conversation_id = None
+                # Clear chat bubbles from UI
+                for i in reversed(range(self.chat_layout.count() - 1)):
+                    widget = self.chat_layout.itemAt(i).widget()
+                    if widget:
+                        widget.setParent(None)
+                self._scroll_to_bottom()
 
 def run_app():
     app = QApplication(sys.argv)
